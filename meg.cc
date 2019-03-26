@@ -533,10 +533,12 @@ u64 t[3] = {0, 0, 0};
 // - Do an unclear number of adds
 // - Do one multiply
 // - Write to one r and one m register.
-// - Read/write to the product/accumulator register (write then read, other registers are read then write)
+// - Read/write to the product/accumulator register
+//   (write then read, other registers are read then write)
 // - Read/write to the memory buffer
 // - Read and possibly step a lfo register
-// - Every instruction where pc % 3 == 0 can initiate a memory access.  Read results are available two cycles after.
+// - Every instruction where pc % 3 == 0 can initiate a memory access.
+//   Read results are available two cycles after.
 // 
 // Instruction structure:
 //
@@ -608,7 +610,9 @@ u64 t[3] = {0, 0, 0};
 
 void dump(std::string name, u32 address, u16 start, u16 len, ent *fp, ent *in)
 {
-  printf("  %s:\n", name.c_str());
+  char mulstr[200], storestr[200], memstr[200];
+
+  printf("  === %s ===\n", name.c_str());
   for(int i=0; i<len; i++) {
     u64 opc = r64(address+8*i);
     t[(start+i) % 3] |= opc;
@@ -637,58 +641,66 @@ void dump(std::string name, u32 address, u16 start, u16 len, ent *fp, ent *in)
       aname = anb;
     }
 
-    printf("%03x: %016lx [47:r%02x 39:m%02x 10:r%02x 4:m%02x - 55:%03x 45:%x 19:%04x 0:%x]",
-	   start+i, opc,
+    printf("fp%03x: ", start+i);
+    if((start+i)%3==0) printf("of%03x: ", (start+i)/3); else printf("       ");
+    printf("%016lx [47:r%02x 39:m%02x 10:r%02x 4:m%02x - 55:%03x 45:%x 19:%04x 0:%x] ",
+	   opc,
 	   b(opc, 47, 8), b(opc, 39, 6), b(opc, 10, 8), b(opc, 4, 6),
 	   b(opc, 55, 6), b(opc, 45, 2), b(opc, 19, 14), b(opc, 0, 4));
-
-    if(b(opc, 62, 1))
-      printf(" lfo");
-
     if(b(opc, 23, 1))
       switch(b(opc, 24, 2)) {
       case 0:
 	if(b(opc, 18, 1))
-	  printf(" [p += %s * m%02x]", aname, b(opc,  4, 6));
+	  sprintf(mulstr, "[p += %s * m%02x]", aname, b(opc,  4, 6));
 	else
-	  printf(" [p += %s * r%02x]", aname, b(opc, 10, 8));
+	  sprintf(mulstr, "[p += %s * r%02x]", aname, b(opc, 10, 8));
 	break;
       case 1:
-	printf(" [p ?1= %s * (r%02x + m%02x)]", aname, b(opc, 10, 8), b(opc,  4, 6));
+	sprintf(mulstr, "[p ?1= %s * (r%02x + m%02x)]", aname, b(opc, 10, 8), b(opc,  4, 6));
 	break;
       case 2:
-	printf(" [p ?2= %s * (r%02x + m%02x)]", aname, b(opc, 10, 8), b(opc,  4, 6));
+	sprintf(mulstr, "[p ?2= %s * (r%02x + m%02x)]", aname, b(opc, 10, 8), b(opc,  4, 6));
 	break;
       case 3:
 	if(b(opc, 18, 1))
-	  printf(" [p = %s * m%02x]", aname, b(opc,  4, 6));
+	  sprintf(mulstr, "[p = %s * m%02x]", aname, b(opc,  4, 6));
 	else
-	  printf(" [p = %s * r%02x]", aname, b(opc, 10, 8));
+	  sprintf(mulstr, "[p = %s * r%02x]", aname, b(opc, 10, 8));
 	break;
       }
+    else sprintf(mulstr, "");
+
 
     if(b(opc, 30, 1)) {
       if(b(opc, 61, 1))
-	printf(" [mbuf = p]");
+	sprintf(storestr, "[mbuf = p]");
       else if(b(opc, 46, 1) == 1)
-	printf(" [m%02x = p]", b(opc, 39, 6));
+	sprintf(storestr, "[m%02x = p]", b(opc, 39, 6));
       else
-	printf(" [r%02x = p]", b(opc, 47, 8));
-    } else if(b(opc, 46, 1) == 1)
-      printf(" [m%02x = ?%d]", b(opc, 39, 6), b(opc, 45, 1));
-
+	sprintf(storestr, "[r%02x = p]", b(opc, 47, 8));
+    } else {
+      if(b(opc, 46, 1) == 1)
+          sprintf(storestr, "[m%02x = ?%d]", b(opc, 39, 6), b(opc, 45, 1));
+      else
+          sprintf(storestr, "");
+    }
 
     if(b(opc, 36, 2)) {
       static const char *modes[4] = { nullptr, "w", "r", "r+1" };
       int mode = b(opc, 36, 2);
-      
-      printf(" [mem %s %x %s", modes[mode], b(opc, 33, 3), iname);
+
       if(mode & 2)
-	printf(" -> m%02x (%02x)", b(r64(address+8*(i+2)), 39, 6), b(r64(address+8*(i+2)), 47, 8));
-      printf("]");
+        sprintf(memstr,"[mem %s %x %s -> m%02x (%02x)]", modes[mode], b(opc, 33, 3), iname,
+                b(r64(address+8*(i+2)), 39, 6), b(r64(address+8*(i+2)), 47, 8));
+      else
+        sprintf(memstr, "[mem %s %x %s]", modes[mode], b(opc, 33, 3), iname);
+    } else {
+          sprintf(memstr,"");
     }
 
-    printf("\n");
+    if(opc==0) printf("// NOP\n");
+    else if(!b(opc, 23, 1) && !b(opc, 30, 1) && !b(opc, 46, 1) && !b(opc, 36, 2)) printf("// ???\n");
+    else printf("%-3s %-32s %-10s %s\n", b(opc, 62, 1)? "lfo":"", mulstr, storestr, memstr);
   }
   printf("\n");
 }
@@ -705,23 +717,15 @@ int main()
   for(int i=0; i<3; i++) {
     static const char *names[3] = { "chorus", "phaser", "ens detune" };
     if(chorus_mask & (1<<i)) {
-      std::string s = std::string("chorus ") + names[i];
+      std::string s = std::string("chorus: ") + names[i];
       dump(s, 0x8ca2c + 0x140*i, 0x98, 0x28, chorus_descs[i][0], chorus_descs[i][1]);
-    }
-  }
-
-  for(int i=0; i<15; i++) {
-    static const char *names[15] = { "delay", "ambiance", "phaser", "er", "wah", "distortion", "rooms", "ens detune", "?8", "?9", "talk mod", "lo-fi", "?12", "wah+dist+delay", "dist+delay" };
-    if(var_mask & (1 << i)) {
-      std::string s = std::string("variation ") + names[i];
-      dump(s, 0x8cdec + 0x300*i, 0x120, 0x60, variation_descs[i][0], variation_descs[i][1]);
     }
   }
 
   for(int i=0; i<11; i++) {
     static const char *names[11] = { "chorus", "speaker", "distortion", "aural", "wah", "phaser", "ens detune", "eq", "delay", "karaoke", "rooms" };
     if(ins1_mask & (1 << i)) {
-      std::string s = std::string("insertion1 ") + names[i];
+      std::string s = std::string("insertion1: ") + names[i];
       dump(s, 0x8faec + 0x180*i, 0xc0, 0x30, insertion1_descs[i][0], insertion1_descs[i][1]);
     }
   }
@@ -729,12 +733,20 @@ int main()
   for(int i=0; i<11; i++) {
     static const char *names[11] = { "chorus", "speaker", "distortion", "aural", "wah", "phaser", "ens detune", "eq", "delay", "karaoke", "rooms" };
     if(ins2_mask & (1 << i)) {
-      std::string s = std::string("insertion2 ") + names[i];
+      std::string s = std::string("insertion2: ") + names[i];
       dump(s, 0x90b6c + 0x180*i, 0xf0, 0x30, insertion2_descs[i][0], insertion2_descs[i][1]);
     }
   }
 
-  fprintf(stderr, "%016lx %016lx %016lx\n", ~t[0], ~t[1], ~t[2]);
+  for(int i=0; i<15; i++) {
+    static const char *names[15] = { "delay", "ambiance", "phaser", "er", "wah", "distortion", "rooms", "ens detune", "?8", "off", "talk mod", "lo-fi", "?12", "wah+dist+delay", "dist+delay" };
+    if(var_mask & (1 << i)) {
+      std::string s = std::string("variation: ") + names[i];
+      dump(s, 0x8cdec + 0x300*i, 0x120, 0x60, variation_descs[i][0], variation_descs[i][1]);
+    }
+  }
+
+  printf("Non used bits in opcodes:\n+0: %016lx\n+1: %016lx\n+2: %016lx\n", ~t[0], ~t[1], ~t[2]);
   return 0;
 }
 
